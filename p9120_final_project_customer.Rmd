@@ -8,6 +8,7 @@ output: html_document
 library(tidyverse)
 library(data.table)
 library(corrplot)
+library(factoextra)
 
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -32,7 +33,14 @@ check_cor <- model.matrix(~., customer)[, -1]
 corrplot(cor(check_cor[, -c(1:2)]), method = "circle", type = "full",
          tl.cex = 0.75, tl.col = "darkblue")
 
-# 
+# a quich try of k-means on continuous unselected vars
+try <- scale(customer[, c(5:8, 10:16, 23:26)])
+fviz_nbclust(try, FUNcluster = kmeans, method = "gap_stat")
+
+km <- kmeans(try, centers = 3, nstart = 20)
+fviz_cluster(list(data = try, cluster = km$cluster),
+             ellipse.type = "convex", geom = "point",
+             labelsize = 5, palette = "Dark2") + theme_bw()
 ```
 
 
