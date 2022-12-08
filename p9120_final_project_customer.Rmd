@@ -16,10 +16,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Import data & EDA
 
-**Data preprocessing:** 
+**Data processing:** 
 
 ```{r}
-# Import data & preprocessing
+# === Import data & preprocessing ===
 customer_raw <- fread("./data/marketing_campaign.csv")
 customer <- customer_raw %>% select(-c(8, 27:28)) %>% 
   mutate_at(c(3:4, 20:26), .funs = ~as.factor(.)) %>% 
@@ -27,13 +27,16 @@ customer <- customer_raw %>% select(-c(8, 27:28)) %>%
   mutate(Income = ifelse(is.na(Income), round(mean(Income, na.rm = TRUE)), Income)) %>% 
   select(1:8, 25, 9:14, 15, 23:24, 20:22, 26, 16:19)
 
-# EDA
+# === EDA ===
 # Check correlation
 check_cor <- model.matrix(~., customer)[, -1]
 corrplot(cor(check_cor[, -c(1:2)]), method = "circle", type = "full",
-         tl.cex = 0.75, tl.col = "darkblue")
+         tl.cex = 0.75, tl.col = "black")
 
-# a quich try of k-means on continuous unselected vars
+
+
+# a quick try of k-means on continuous unselected vars
+set.seed(2022)
 try <- scale(customer[, c(5:8, 10:16, 23:26)])
 fviz_nbclust(try, FUNcluster = kmeans, method = "gap_stat")
 
