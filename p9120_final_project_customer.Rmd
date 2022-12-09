@@ -22,23 +22,40 @@ knitr::opts_chunk$set(echo = TRUE)
 # === Import data & preprocessing ===
 customer_raw <- fread("./data/marketing_campaign.csv")
 customer <- customer_raw %>% select(-c(8, 27:28)) %>% 
-  mutate_at(c(3:4, 20:26), .funs = ~as.factor(.)) %>% 
   # for missing
-  mutate(Income = ifelse(is.na(Income), round(mean(Income, na.rm = TRUE)), Income)) %>% 
-  select(1:8, 25, 9:14, 15, 23:24, 20:22, 26, 16:19)
+  mutate(Income = ifelse(is.na(Income), round(mean(Income, na.rm = TRUE)), Income),
+         Age = 2022 - Year_Birth,
+         AcceptedComp = ifelse(rowSums(across(starts_with("AcceptedCmp"))) + Response > 0, 1, 0)
+         # AcceptedCmp = sum(across(starts_with("AcceptedCmp"))),
+         ) %>% 
+  select(1, 27, 3:8, 25, 9:14, 15, 28, 16:19) %>% 
+  mutate_at(c(3:4, 9, 17), .funs = ~as.factor(.))
 
 # === EDA ===
 # Check correlation
 check_cor <- model.matrix(~., customer)[, -1]
-corrplot(cor(check_cor[, -c(1:2)]), method = "circle", type = "full",
+corrplot(cor(check_cor[, -1]), method = "circle", type = "full",
          tl.cex = 0.75, tl.col = "black")
+
+# some demogrpahics
+customer %>% 
+  group_by(Education, Marital_Status) %>% 
+  summarise(tot = n()) %>% 
+  ggplot(aes(x = tot, y = Marital_Status, fill = Education)) +
+  geom_bar(stat = "identity") + theme_bw() +
+  scale_fill_brewer(palette = "RdYlBu") +
+  labs(
+    x = "Number of participants",
+    y = "Marital Status",
+    title = "Frequency by Marital Status & Education"
+  )
 
 
 
 # a quick try of k-means on continuous unselected vars
-set.seed(2022)
-try <- scale(customer[, c(5:8, 10:16, 23:26)])
-fviz_nbclust(try, FUNcluster = kmeans, method = "gap_stat")
+set.seed(202212)
+try <- scale(customer[, c(5:8, 10:16, 18:21)])
+fviz_nbclust(try, FUNcluster = kmeans, method = "gap_stat", iter.max = 50)
 
 km <- kmeans(try, centers = 3, nstart = 20)
 fviz_cluster(list(data = try, cluster = km$cluster),
