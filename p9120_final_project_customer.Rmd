@@ -9,15 +9,18 @@ library(tidyverse)
 library(data.table)
 library(corrplot)
 library(factoextra)
+library(gtsummary)
 
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+
+theme_gtsummary_compact()
 ```
 
 
 ## Import data & EDA
-
-**Data processing:** 
-
 ```{r}
 # === Import data & preprocessing ===
 customer_raw <- fread("./data/marketing_campaign.csv")
@@ -37,7 +40,7 @@ check_cor <- model.matrix(~., customer)[, -1]
 corrplot(cor(check_cor[, -1]), method = "circle", type = "full",
          tl.cex = 0.75, tl.col = "black")
 
-# some demogrpahics
+# Some demogrpahics
 customer %>% 
   group_by(Education, Marital_Status) %>% 
   summarise(tot = n()) %>% 
@@ -49,18 +52,53 @@ customer %>%
     y = "Marital Status",
     title = "Frequency by Marital Status & Education"
   )
+```
 
 
-
+## Clustering
+```{r}
+# === K-means === 
 # a quick try of k-means on continuous unselected vars
 set.seed(202212)
-try <- scale(customer[, c(5:8, 10:16, 18:21)])
-fviz_nbclust(try, FUNcluster = kmeans, method = "gap_stat", iter.max = 50)
+customer_scale <- scale(customer[, c(5:8, 10:16, 18:21)])
 
-km <- kmeans(try, centers = 3, nstart = 20)
-fviz_cluster(list(data = try, cluster = km$cluster),
+fviz_nbclust(customer_scale, FUNcluster = kmeans, 
+             method = "gap_stat", iter.max = 50)
+km <- kmeans(customer_scale, centers = 3, nstart = 20)
+fviz_cluster(list(data = customer_scale, cluster = km$cluster),
              ellipse.type = "convex", geom = "point",
              labelsize = 5, palette = "Dark2") + theme_bw()
+
+# Demographic for each cluster
+tbl_summary(by = clust,
+            data = customer %>% 
+              mutate(clust = km$cluster,
+                     Complain = factor(Complain, levels = c(0, 1), labels = c("No", "Yes")),
+                     AcceptedComp = factor(AcceptedComp, levels = c(0, 1), labels = c("No", "Yes")),
+                     clust = factor(clust, levels = c(1:3), labels = c("Cluster 1", "Cluster 2", "Cluster 3"))) %>% 
+              select(-1),
+            label = list(Marital_Status ~ "Marital Status", Kidhome ~ "Number of Kids",
+                         Teenhome ~ "Number of Teens", Recency ~ "Number of Days Since Last Purchase",
+                         Complain ~ "Complaint (in last 2 yrs)",
+                         
+                         # products
+                         MntWines ~ "Wine", MntFruits ~ "Fruits", MntMeatProducts ~ "Meat Products",
+                         MntFishProducts ~ "Fish Products", MntSweetProducts ~ "Sweet Products",
+                         MntGoldProds ~ "Gold Products", 
+                         
+                         # campaign & place
+                         NumDealsPurchases ~ "Number of Purchases made with a discount", 
+                         AcceptedComp ~ "Customer Accepted the Offer",
+                         NumWebPurchases ~ "Through the Company's Website", NumCatalogPurchases ~ "Using a Catelogue",
+                         NumStorePurchases ~ "Directlt in Stores", NumWebVisitsMonth ~ "Website Visits (in last month)")) %>% 
+  add_p(all_categorical() ~ "chisq.test") %>% add_overall() %>% 
+  modify_table_styling(footnote = "Amount spent on a type of product in last two years",
+                       rows = (label == "Wine"), columns = label) %>% 
+  modify_table_styling(footnote = "Number of purchases made through a way",
+                       rows = (label == "Through the Company's Website"),
+                       columns = label) %>% 
+  modify_caption("**Demographics of Customers for each K-means Cluster (n=2240)**") %>% 
+  bold_labels()
 ```
 
 
