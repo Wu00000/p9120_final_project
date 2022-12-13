@@ -1,0 +1,42 @@
+---
+title: "p9120_final_project_bigfive"
+author: "Qihang Wu"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(data.table)
+library(corrplot)
+library(factoextra)
+library(cluster)
+library(gtsummary)
+library(fossil)
+library(kableExtra)
+library(bootnet)
+library(qgraph)
+
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE
+)
+
+theme_gtsummary_compact()
+```
+
+
+## Import data & EDA
+```{r}
+# Import data
+
+```
+
+
+
+
+
+
