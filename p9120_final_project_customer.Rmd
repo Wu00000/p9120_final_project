@@ -1,7 +1,11 @@
 ---
 title: "p9120_final_project_customer"
 author: "Qihang Wu"
-output: html_document
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    code_folding: hide
 ---
 
 ```{r setup, include=FALSE}
@@ -9,7 +13,12 @@ library(tidyverse)
 library(data.table)
 library(corrplot)
 library(factoextra)
+library(cluster)
 library(gtsummary)
+library(fossil)
+library(kableExtra)
+library(bootnet)
+library(qgraph)
 
 knitr::opts_chunk$set(
   message = FALSE,
@@ -24,13 +33,17 @@ theme_gtsummary_compact()
 ```{r}
 # === Import data & preprocessing ===
 customer_raw <- fread("./data/marketing_campaign.csv")
+
+alone_status <- c("Widow", "Single", "Divorced", "Alone", "Absurd")
 customer <- customer_raw %>% select(-c(8, 27:28)) %>% 
   # for missing
   mutate(Income = ifelse(is.na(Income), round(mean(Income, na.rm = TRUE)), Income),
          Age = 2022 - Year_Birth,
-         AcceptedComp = ifelse(rowSums(across(starts_with("AcceptedCmp"))) + Response > 0, 1, 0)
-         # AcceptedCmp = sum(across(starts_with("AcceptedCmp"))),
+         AcceptedComp = ifelse(rowSums(across(starts_with("AcceptedCmp"))) + Response > 0, 1, 0),
+         Education = recode(Education, Basic = "Below some college", `2n Cycle` = "Associate degree",
+                            Graduation = "Bachelor's degree", Master = "Master's degree", PhD = "Doctoral degree")
          ) %>% 
+  filter(Marital_Status != "YOLO") %>% 
   select(1, 27, 3:8, 25, 9:14, 15, 28, 16:19) %>% 
   mutate_at(c(3:4, 9, 17), .funs = ~as.factor(.))
 
@@ -41,38 +54,74 @@ corrplot(cor(check_cor[, -1]), method = "circle", type = "full",
          tl.cex = 0.75, tl.col = "black")
 
 # Some demogrpahics
+summary(customer)
+
 customer %>% 
   group_by(Education, Marital_Status) %>% 
   summarise(tot = n()) %>% 
-  ggplot(aes(x = tot, y = Marital_Status, fill = Education)) +
+  ggplot(aes(x = tot, y = Education, fill = Marital_Status)) +
   geom_bar(stat = "identity") + theme_bw() +
-  scale_fill_brewer(palette = "RdYlBu") +
+  scale_fill_brewer(palette = "RdYlGn") +
   labs(
     x = "Number of participants",
-    y = "Marital Status",
+    y = "Education",
     title = "Frequency by Marital Status & Education"
   )
 ```
 
 
-## Clustering
-```{r}
-# === K-means === 
-# a quick try of k-means on continuous unselected vars
+## K-means (continuous)
+```{r, fig.width = 10}
 set.seed(202212)
-customer_scale <- scale(customer[, c(5:8, 10:16, 18:21)])
+customer_con <- customer[, c(5:8, 10:16, 18:21)]
+customer_scale <- scale(customer_con)
 
 fviz_nbclust(customer_scale, FUNcluster = kmeans, 
              method = "gap_stat", iter.max = 50)
 km <- kmeans(customer_scale, centers = 3, nstart = 20)
 fviz_cluster(list(data = customer_scale, cluster = km$cluster),
              ellipse.type = "convex", geom = "point",
-             labelsize = 5, palette = "Dark2") + theme_bw()
+             labelsize = 5, palette = "Dark2",
+             main = "K-means Cluster Plot for Customer Data") + theme_bw()
+```
+
+
+## Hierarchical clustering
+```{r}
+
+```
+
+
+## K-medoids and Gower distance
+```{r}
+# Gower distance
+res_gower <- daisy(customer, metric = "gower")
+summary(res_gower)
+
+pam_clust <- pam(as.matrix(res_gower), diss = TRUE, k = 3)
+
+# Find the number of clusters - 3
+res_silhouette <- lapply(2:10, function(x) {
+  pam_clust <- pam(as.matrix(res_gower), diss = TRUE, k = x)
+  silhouette <- pam_clust$silinfo$avg.width
+})
+
+do.call(rbind, res_silhouette) %>% 
+  as.data.frame() %>% mutate(cluster = c(2:10)) %>% 
+  ggplot(aes(x = cluster, y = V1)) +
+  geom_line() + theme_bw() +
+  labs(x = "Number of clusters k", y = "Sihouette Width", 
+       title = "Optimal number of clusters")
+
+km_mod <- pam(as.matrix(res_gower), diss = TRUE, k = 3)
+
+# Clustering Comparison 
+
 
 # Demographic for each cluster
 tbl_summary(by = clust,
             data = customer %>% 
-              mutate(clust = km$cluster,
+              mutate(clust = km_mod$clustering,
                      Complain = factor(Complain, levels = c(0, 1), labels = c("No", "Yes")),
                      AcceptedComp = factor(AcceptedComp, levels = c(0, 1), labels = c("No", "Yes")),
                      clust = factor(clust, levels = c(1:3), labels = c("Cluster 1", "Cluster 2", "Cluster 3"))) %>% 
@@ -91,17 +140,26 @@ tbl_summary(by = clust,
                          AcceptedComp ~ "Customer Accepted the Offer",
                          NumWebPurchases ~ "Through the Company's Website", NumCatalogPurchases ~ "Using a Catelogue",
                          NumStorePurchases ~ "Directlt in Stores", NumWebVisitsMonth ~ "Website Visits (in last month)")) %>% 
-  add_p(all_categorical() ~ "chisq.test") %>% add_overall() %>% 
+  add_p(list(all_categorical() ~ "chisq.test", all_continuous() ~ "aov")) %>% add_overall() %>% 
   modify_table_styling(footnote = "Amount spent on a type of product in last two years",
                        rows = (label == "Wine"), columns = label) %>% 
   modify_table_styling(footnote = "Number of purchases made through a way",
                        rows = (label == "Through the Company's Website"),
                        columns = label) %>% 
-  modify_caption("**Demographics of Customers for each K-means Cluster (n=2240)**") %>% 
+  modify_caption("**Demographics of Customers for each K-medoids Cluster (n=2238)**") %>% 
   bold_labels()
+
+# Networks construction
+lapply(1:length(unique(km_mod$clustering)), function(x) {
+  print(paste("Cluster", x, "with", sum(km$cluster == x), "subjects"))
+  
+  cl <- customer_con[km_mod$clustering == x,]
+  net <- estimateNetwork(as.matrix(cl), default = "EBICglasso")
+  qgraph(net$graph, labels = names(cl), layout = "spring",
+         theme = "TeamFortress", label.cex = 1.5,
+         label.fill.horizontal = .7)
+})
 ```
-
-
 
 
 
