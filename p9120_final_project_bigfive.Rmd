@@ -31,7 +31,12 @@ theme_gtsummary_compact()
 
 ## Import data & EDA
 ```{r}
-# Import data
+# Import original data & sample 1%
+# bf_dat <- fread("./data/data-final.csv")
+# chose_ind <- sample(c(1:nrow(bf_dat)), size = round(nrow(bf_dat) * 0.1), replace = FALSE)
+# bf <- bf_dat[chose_ind, ]
+# write_csv(bf, "./data/big_five.csv")
+
 
 ```
 
