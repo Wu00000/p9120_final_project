@@ -1,5 +1,5 @@
 ---
-title: "p9120_final_project_customer"
+title: "p9120_final_project_clustering"
 author: "Qihang Wu"
 output: 
   html_document:
@@ -71,7 +71,8 @@ customer %>%
 ```
 
 
-## K-means
+## Clustering on customer data
+### K-means
 ```{r}
 set.seed(202212)
 customer_con <- customer[, c(5:8, 10:16, 18:21)]
@@ -87,7 +88,7 @@ fviz_cluster(list(data = customer_scale, cluster = km$cluster),
 ```
 
 
-## K-medoids and Gower distance
+### K-medoids and Gower distance
 ```{r}
 # Gower distance
 res_gower <- daisy(customer, metric = "gower")
@@ -192,6 +193,16 @@ lapply(1:length(unique(km_mod$clustering)), function(x) {
 ```
 
 
+## Import data (big_five)
+```{r}
+# Import original data & sample 1%
+# bf_dat <- fread("./data/data-final.csv")
+# chose_ind <- sample(c(1:nrow(bf_dat)), size = round(nrow(bf_dat) * 0.1), replace = FALSE)
+# bf <- bf_dat[chose_ind, ]
+# write_csv(bf, "./data/big_five.csv")
+
+big_five <- fread("./data/big_five.csv")
+```
 
 
 
