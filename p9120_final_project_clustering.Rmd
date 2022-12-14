@@ -5,21 +5,23 @@ output:
   html_document:
     toc: TRUE
     toc_float: TRUE
-    code_folding: hide
 ---
 
 ```{r setup, include=FALSE}
 library(tidyverse)
 library(data.table)
 library(corrplot)
+library(parallel)
 library(factoextra)
 library(cluster)
 library(gtsummary)
 library(fossil)
+library(ggradar)
 library(kableExtra)
 library(patchwork)
 library(bootnet)
 library(qgraph)
+library(poLCA)
 
 knitr::opts_chunk$set(
   message = FALSE,
@@ -27,10 +29,12 @@ knitr::opts_chunk$set(
 )
 
 theme_gtsummary_compact()
+num.cores <- detectCores() - 1
+select <- dplyr::select
 ```
 
 
-## Import data & EDA
+## Import data
 ```{r}
 # === Import data & preprocessing ===
 customer_raw <- fread("./data/marketing_campaign.csv")
@@ -48,7 +52,43 @@ customer <- customer_raw %>% select(-c(8, 27:28)) %>%
   select(1, 27, 3:8, 25, 9:14, 15, 28, 16:19) %>% 
   mutate_at(c(3:4, 9, 17), .funs = ~as.factor(.))
 
-# === EDA ===
+# Import original data & sample 0.5%
+
+bf_dat <- fread("./data/data-final.csv")
+chose_ind <- sample(c(1:nrow(bf_dat)), size = round(nrow(bf_dat) * 0.002), replace = FALSE)
+bf <- bf_dat[chose_ind, ]
+write_csv(bf, "./data/big_five.csv")
+big_five_raw <- fread("./data/big_five.csv")
+
+country_df <- countrycode::codelist %>% 
+  select(3, 6, 17)
+colnames(country_df)[3] <- "country"
+big_five_raw <- left_join(big_five_raw, country_df, by = "country") %>% 
+  select(-c(51:104, 106, 108))
+big_five_raw <- big_five_raw %>% 
+  mutate(num_zero = rowSums(big_five_raw[, 1:50] == 0)) %>% 
+  filter(num_zero == 0) %>% select(-57)
+
+big_five <- big_five_raw %>% 
+  filter(IPC == 1) %>% 
+  mutate_at(c(1:50, 55:56), .funs = ~as.factor(.)) %>% 
+  mutate(
+    testlapse = as.numeric(testelapse),
+    lat = as.numeric(lat_appx_lots_of_err),
+    long = as.numeric(long_appx_lots_of_err),
+    country = country.name.en
+    ) %>% 
+  select(-c(51:54, 56)) %>% 
+  na.omit()
+
+big_five <- big_five %>% mutate(id = seq(1:nrow(big_five))) %>% 
+  relocate(id, .before = EXT1)
+```
+
+
+## EDA
+```{r}
+# --- customer ---
 # Check correlation
 check_cor <- model.matrix(~., customer)[, -1]
 corrplot(cor(check_cor[, -1]), method = "circle", type = "full",
@@ -68,6 +108,44 @@ customer %>%
     y = "Education",
     title = "Frequency by Marital Status & Education"
   )
+
+# --- Big Five ---
+# Geographic map
+mapworld <- borders("world", colour = "gray50", fill = "white")
+big_five %>% ggplot() +
+  geom_point(aes(x = long, y = lat, color = country), size = 1.5) + mapworld +
+  theme_bw() + theme(legend.position = "none") +
+  labs(x = "Longitude", y = "Latitude", title = "Geographic Distribution of Participants (n=1243)")
+
+# Frequency by country
+bf_eda <- big_five %>% 
+  group_by(country) %>% summarise(tot = n())
+bf_eda[order(bf_eda$tot, decreasing = TRUE), ] %>% 
+  top_n(50) %>% 
+  ggplot(aes(x = tot, y = reorder(country, tot))) +
+  geom_bar(stat = "identity") + theme_bw() + 
+  theme(legend.position = "none", axis.text.y = element_text(size = 7)) +
+  labs(x = "Number of Participants", y = "Country", title = "Number of Participants by Country")
+
+# 
+dat <- big_five %>% select(2:11) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "extraversion", values_to = "scale"
+  ) %>% 
+  group_by(extraversion, scale) %>% 
+  summarise(tot = n()) %>% 
+  mutate(all = nrow(big_five),
+         prct = tot/all)
+
+dat %>% select(-c(3:4)) %>% 
+  pivot_wider(
+    names_from = "scale", values_from = "prct"
+  ) %>% setNames(c("Extraversion", "Strongly Disagree", "Disagree",
+                   "Neutral", "Agree", "Strongly Agree")) %>% View()
+  ggradar(legend.text.size = 6, legend.position = "bottom",
+          axis.label.size = 5, base.size = 20, group.point.size = 2, group.line.width = .5) +
+  labs(title = "Preference Percentage for Extraversion (n=59464)")
 ```
 
 
@@ -113,7 +191,6 @@ km_mod <- pam(as.matrix(res_gower), diss = TRUE, k = 3)
 
 # Clustering Comparison 
 fossil::rand.index(km$cluster, km_mod$clustering)
-fossil::adj.rand.index(km$cluster, km_mod$clustering)
 
 # --- Demographic for each cluster ---
 tbl_summary(by = clust,
@@ -192,16 +269,51 @@ lapply(1:length(unique(km_mod$clustering)), function(x) {
 })
 ```
 
+## LCA on big five
+```{r, results = 'hide'}
+# Try #class from 2 to 8
+lca_dat <- big_five[, 2:51] %>% mutate_all(.funs = ~as.numeric(.))
+f <- formula(paste("cbind(", paste(colnames(lca_dat), collapse = ","), ") ~ 1"))
 
-## Import data (big_five)
-```{r}
-# Import original data & sample 1%
-# bf_dat <- fread("./data/data-final.csv")
-# chose_ind <- sample(c(1:nrow(bf_dat)), size = round(nrow(bf_dat) * 0.1), replace = FALSE)
-# bf <- bf_dat[chose_ind, ]
-# write_csv(bf, "./data/big_five.csv")
+lca_res <- mclapply(2:8, function(x) {
+  set.seed(202212)
+  lca <- poLCA(f, lca_dat,
+               nclass = x, verbose = FALSE, nrep = 20)
+  return(lca)
+}, mc.cores = num.cores)
 
-big_five <- fread("./data/big_five.csv")
+df_bic <- data.frame(Class = 2:8, BIC = unlist(lapply(lca_res, function(obj) obj$bic)))
+df_bic %>% 
+  ggplot(aes(x = Class, y = BIC, label = round(BIC))) +
+  geom_line() + geom_point() +
+  geom_text(vjust = -.35) + theme_bw() +
+  labs(title = "BIC for Latent Class Analysis for Big Five Data")
+
+# Choose 5 classes with smallest BIC
+n_class <- df_bic$Class[which.min(df_bic$BIC)]
+fit_lca <- lca_res[[n_class - 1]]
+
+# 
+dat_clust <- lca_dat %>% 
+  mutate(clust = fit_lca$predclass)
+
+dat_radar <- dat_clust %>% 
+  pivot_longer(
+    1:50, 
+    names_to = "variable", values_to = "value"
+  ) %>% 
+  group_by(variable, clust, value) %>% 
+  summarise(tot = n()) %>% 
+  pivot_wider(
+    c(1:2),
+    names_from = "value", values_from = "tot"
+  )
+
+dat_radar[is.na(dat_radar)] <- 0
+dat_radar %>% 
+  mutate(all = `1` + `2` + `3` + `4` + `5`) %>% 
+  mutate_at(c(3:7), .funs = ~./all) %>% 
+  select(-8)
 ```
 
 
