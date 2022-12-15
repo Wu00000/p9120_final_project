@@ -23,6 +23,7 @@ library(bootnet)
 library(qgraph)
 library(poLCA)
 library(ggalluvial)
+library(ggpubr)
 
 knitr::opts_chunk$set(
   message = FALSE,
@@ -37,7 +38,7 @@ select <- dplyr::select
 
 ## Import data
 ```{r}
-# === Import data & preprocessing ===
+# --- customer ---
 customer_raw <- fread("./data/marketing_campaign.csv")
 
 alone_status <- c("Widow", "Single", "Divorced", "Alone", "Absurd")
@@ -47,13 +48,18 @@ customer <- customer_raw %>% select(-c(8, 27:28)) %>%
          Age = 2022 - Year_Birth,
          AcceptedComp = ifelse(rowSums(across(starts_with("AcceptedCmp"))) + Response > 0, 1, 0),
          Education = recode(Education, Basic = "Below some college", `2n Cycle` = "Associate degree",
-                            Graduation = "Bachelor's degree", Master = "Master's degree", PhD = "Doctoral degree")
+                            Graduation = "Bachelor's degree", Master = "Master's degree", PhD = "Doctoral degree"),
+         Numchild = Kidhome + Teenhome,
+         MntTotal = MntWines + MntFruits + MntMeatProducts + MntFishProducts + MntSweetProducts + MntGoldProds,
+         IsAlone = ifelse(Marital_Status %in% alone_status, 1, 0),
+         FamilySize = ifelse(IsAlone == 1, 1, 2) + Numchild
          ) %>% 
   filter(Marital_Status != "YOLO") %>% 
-  select(1, 27, 3:8, 25, 9:14, 15, 28, 16:19) %>% 
+  select(1, 27, 3, 31, 5, 29, 32, 8, 25, 9:15, 28, 16:19) %>% 
   mutate_at(c(3:4, 9, 17), .funs = ~as.factor(.))
 
-# Import original data & sample 0.5%
+# --- big five ---
+# Import original data & sample 0.2%
 
 # bf_dat <- fread("./data/data-final.csv")
 # chose_ind <- sample(c(1:nrow(bf_dat)), size = round(nrow(bf_dat) * 0.002), replace = FALSE)
@@ -95,40 +101,27 @@ check_cor <- model.matrix(~., customer)[, -1]
 corrplot(cor(check_cor[, -1]), method = "circle", type = "full",
          tl.cex = 0.75, tl.col = "black")
 
-# Some demogrpahics
 summary(customer)
-
-customer %>% 
-  group_by(Education, Marital_Status) %>% 
-  summarise(tot = n()) %>% 
-  ggplot(aes(x = tot, y = Education, fill = Marital_Status)) +
-  geom_bar(stat = "identity") + theme_bw() +
-  scale_fill_brewer(palette = "RdYlGn") +
-  labs(
-    x = "Number of participants",
-    y = "Education",
-    title = "Frequency by Marital Status & Education"
-  )
 
 # Total demographics
 tbl_summary(dat = customer %>% 
               mutate(Complain = factor(Complain, levels = c(0, 1), labels = c("No", "Yes")),
+                     IsAlone = factor(IsAlone, levels = c(0, 1), labels = c("No", "Yes")),
                      AcceptedComp = factor(AcceptedComp, levels = c(0, 1), labels = c("No", "Yes"))) %>% 
               select(-1),
-            label = list(Marital_Status ~ "Marital Status", Kidhome ~ "Number of Kids",
-                         Teenhome ~ "Number of Teens", Recency ~ "Number of Days Since Last Purchase",
-                         Complain ~ "Complaint (in last 2 yrs)",
+            label = list(Numchild ~ "Number of Children", IsAlone ~ "Is Alone", FamilySize ~ "Family Size",
+                         Recency ~ "Number of Days Since Last Purchase", Complain ~ "Complaint (in last 2 yrs)",
                          
                          # products
                          MntWines ~ "Wine", MntFruits ~ "Fruits", MntMeatProducts ~ "Meat Products",
                          MntFishProducts ~ "Fish Products", MntSweetProducts ~ "Sweet Products",
-                         MntGoldProds ~ "Gold Products", 
+                         MntGoldProds ~ "Gold Products",
                          
                          # campaign & place
                          NumDealsPurchases ~ "Number of Purchases made with a discount", 
                          AcceptedComp ~ "Customer Accepted the Offer",
                          NumWebPurchases ~ "Through the Company's Website", NumCatalogPurchases ~ "Using a Catelogue",
-                         NumStorePurchases ~ "Directlt in Stores", NumWebVisitsMonth ~ "Website Visits (in last month)")) %>% 
+                         NumStorePurchases ~ "Directly in Stores", NumWebVisitsMonth ~ "Website Visits (in last month)")) %>% 
   modify_table_styling(footnote = "Amount spent on a type of product in last two years",
                        rows = (label == "Wine"), columns = label) %>% 
   modify_table_styling(footnote = "Number of purchases made through a way",
@@ -143,7 +136,7 @@ mapworld <- borders("world", colour = "gray50", fill = "white")
 big_five %>% ggplot() +
   geom_point(aes(x = long, y = lat, color = country), size = 1.5) + mapworld +
   theme_bw() + theme(legend.position = "none") +
-  labs(x = "Longitude", y = "Latitude", title = "Geographic Distribution of Participants (n=1243)")
+  labs(x = "Longitude", y = "Latitude", title = "Geographic Distribution of Participants (n=1191)")
 
 # Frequency by country
 bf_eda <- big_five %>% 
@@ -161,12 +154,12 @@ bf_eda[order(bf_eda$tot, decreasing = TRUE), ] %>%
 ### K-means
 ```{r}
 set.seed(202212)
-customer_con <- customer[, c(5:8, 10:16, 18:21)]
+customer_con <- customer[, c(2, 5:8, 10:16, 18:21)]
 customer_scale <- scale(customer_con)
 
 fviz_nbclust(customer_scale, FUNcluster = kmeans, 
              method = "gap_stat", iter.max = 50)
-km <- kmeans(customer_scale, centers = 3, nstart = 20)
+km <- kmeans(customer_scale, centers = 5, nstart = 20)
 fviz_cluster(list(data = customer_scale, cluster = km$cluster),
              ellipse.type = "convex", geom = "point",
              labelsize = 5, palette = "Dark2",
@@ -177,12 +170,10 @@ fviz_cluster(list(data = customer_scale, cluster = km$cluster),
 ### K-medoids and Gower distance
 ```{r}
 # Gower distance
-res_gower <- daisy(customer, metric = "gower")
+res_gower <- daisy(customer[, -1], metric = "gower")
 summary(res_gower)
 
-pam_clust <- pam(as.matrix(res_gower), diss = TRUE, k = 3)
-
-# Find the number of clusters - 3
+# Find the optimal number of clusters - 3
 res_silhouette <- lapply(2:10, function(x) {
   pam_clust <- pam(as.matrix(res_gower), diss = TRUE, k = x)
   silhouette <- pam_clust$silinfo$avg.width
@@ -205,11 +196,12 @@ tbl_summary(by = clust,
             data = customer %>% 
               mutate(clust = km_mod$clustering,
                      Complain = factor(Complain, levels = c(0, 1), labels = c("No", "Yes")),
+                     IsAlone = factor(IsAlone, levels = c(0, 1), labels = c("No", "Yes")),
                      AcceptedComp = factor(AcceptedComp, levels = c(0, 1), labels = c("No", "Yes")),
                      clust = factor(clust, levels = c(1:3), labels = c("Cluster 1", "Cluster 2", "Cluster 3"))) %>% 
               select(-1),
-            label = list(Marital_Status ~ "Marital Status", Kidhome ~ "Number of Kids",
-                         Teenhome ~ "Number of Teens", Recency ~ "Number of Days Since Last Purchase",
+            label = list(Numchild ~ "Number of Children", FamilySize ~ "Family Size",
+                         IsAlone ~ "Is Alone", Recency ~ "Number of Days Since Last Purchase",
                          Complain ~ "Complaint (in last 2 yrs)",
                          
                          # products
@@ -221,7 +213,7 @@ tbl_summary(by = clust,
                          NumDealsPurchases ~ "Number of Purchases made with a discount", 
                          AcceptedComp ~ "Customer Accepted the Offer",
                          NumWebPurchases ~ "Through the Company's Website", NumCatalogPurchases ~ "Using a Catelogue",
-                         NumStorePurchases ~ "Directlt in Stores", NumWebVisitsMonth ~ "Website Visits (in last month)")) %>% 
+                         NumStorePurchases ~ "Directly in Stores", NumWebVisitsMonth ~ "Website Visits (in last month)")) %>% 
   add_p(list(all_categorical() ~ "chisq.test", all_continuous() ~ "aov")) %>% add_overall() %>% 
   modify_table_styling(footnote = "Amount spent on a type of product in last two years",
                        rows = (label == "Wine"), columns = label) %>% 
@@ -264,13 +256,15 @@ htp_2 <- customer %>% select(18:20) %>%
 
 htp_1 + htp_2 +
   plot_annotation(title = "Heatmap of Amount Spend and Number of Visits by K-medoids Cluster")
+```
 
-# --- Networks for continuous vars --- 
+```{r, results = 'hide'}
+# --- Networks for continuous vars: huge --- 
 lapply(1:length(unique(km_mod$clustering)), function(x) {
   print(paste("Cluster", x, "with", sum(km$cluster == x), "subjects"))
   
   cl <- customer_con[km_mod$clustering == x,]
-  net <- estimateNetwork(as.matrix(cl), default = "EBICglasso")
+  net <- estimateNetwork(as.matrix(cl), default = "huge")
   qgraph(net$graph, labels = names(cl), layout = "spring",
          theme = "TeamFortress", label.cex = 1.5,
          label.fill.horizontal = .7)
@@ -320,7 +314,7 @@ col_names <- c("PartyLife", "TalkLess", "SocialComfort", "Invisible", "TopicStar
                "RichVocal", "DiffAbstract", "ViviImag", "NoInAbstract", "ExcelIdea",
                "NoImag", "QuickUnderstand", "DiffWord", "SlowReflect", "FullIdea")
 five_factor <- data.frame(
-  fact_name = c("Extraversion", "EmoStablility", "Agreeableness", "Conscientious", "Intellect"),
+  fact_name = c("Extraversion", "EmoStability", "Agreeableness", "Conscientious", "Openness"),
   factr = c("EXT", "EST", "AGR", "CSN", "OPN"))
 # set pos or neg answers
 dirct <- data.frame(variable = c(paste("EXT", seq(10), sep = ""), 
@@ -395,12 +389,22 @@ make_alluvial <- function(x){
     guides(fill = guide_legend(title = "Cluster")) +
     theme_bw() +
     labs(y = "Percentage",
-         title = paste("Alluvial Plot of", x, "by Cluster"))
+         title = paste(x))
 }
 
 # plot alluvial
 lapply(unique(dat_forshow_fin$fact_name), function(x){
   make_alluvial(x)})
+
+# combine plots
+plt1 <- make_alluvial("Agreeableness")
+plt2 <- make_alluvial("Conscientious")
+plt3 <- make_alluvial("EmoStability")
+plt4 <- make_alluvial("Extraversion")
+plt5 <- make_alluvial("Openness")
+
+ggarrange(plt1, plt2, plt3, plt4, plt5, ncol = 3, nrow = 2, common.legend = TRUE, legend = "bottom") %>% 
+  annotate_figure(top = text_grob("Alluvial Plots"))
 ```
 
 
