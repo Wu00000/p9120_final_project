@@ -22,6 +22,7 @@ library(patchwork)
 library(bootnet)
 library(qgraph)
 library(poLCA)
+library(ggalluvial)
 
 knitr::opts_chunk$set(
   message = FALSE,
@@ -54,10 +55,10 @@ customer <- customer_raw %>% select(-c(8, 27:28)) %>%
 
 # Import original data & sample 0.5%
 
-bf_dat <- fread("./data/data-final.csv")
-chose_ind <- sample(c(1:nrow(bf_dat)), size = round(nrow(bf_dat) * 0.002), replace = FALSE)
-bf <- bf_dat[chose_ind, ]
-write_csv(bf, "./data/big_five.csv")
+# bf_dat <- fread("./data/data-final.csv")
+# chose_ind <- sample(c(1:nrow(bf_dat)), size = round(nrow(bf_dat) * 0.002), replace = FALSE)
+# bf <- bf_dat[chose_ind, ]
+# write_csv(bf, "./data/big_five.csv")
 big_five_raw <- fread("./data/big_five.csv")
 
 country_df <- countrycode::codelist %>% 
@@ -126,26 +127,6 @@ bf_eda[order(bf_eda$tot, decreasing = TRUE), ] %>%
   geom_bar(stat = "identity") + theme_bw() + 
   theme(legend.position = "none", axis.text.y = element_text(size = 7)) +
   labs(x = "Number of Participants", y = "Country", title = "Number of Participants by Country")
-
-# 
-dat <- big_five %>% select(2:11) %>% 
-  pivot_longer(
-    everything(),
-    names_to = "extraversion", values_to = "scale"
-  ) %>% 
-  group_by(extraversion, scale) %>% 
-  summarise(tot = n()) %>% 
-  mutate(all = nrow(big_five),
-         prct = tot/all)
-
-dat %>% select(-c(3:4)) %>% 
-  pivot_wider(
-    names_from = "scale", values_from = "prct"
-  ) %>% setNames(c("Extraversion", "Strongly Disagree", "Disagree",
-                   "Neutral", "Agree", "Strongly Agree")) %>% View()
-  ggradar(legend.text.size = 6, legend.position = "bottom",
-          axis.label.size = 5, base.size = 20, group.point.size = 2, group.line.width = .5) +
-  labs(title = "Preference Percentage for Extraversion (n=59464)")
 ```
 
 
@@ -167,7 +148,7 @@ fviz_cluster(list(data = customer_scale, cluster = km$cluster),
 
 
 ### K-medoids and Gower distance
-```{r}
+```{r, results = 'hide'}
 # Gower distance
 res_gower <- daisy(customer, metric = "gower")
 summary(res_gower)
@@ -269,7 +250,9 @@ lapply(1:length(unique(km_mod$clustering)), function(x) {
 })
 ```
 
-## LCA on big five
+
+## Clustering on big five
+### Latent class analysis (LCA)
 ```{r, results = 'hide'}
 # Try #class from 2 to 8
 lca_dat <- big_five[, 2:51] %>% mutate_all(.funs = ~as.numeric(.))
@@ -277,8 +260,7 @@ f <- formula(paste("cbind(", paste(colnames(lca_dat), collapse = ","), ") ~ 1"))
 
 lca_res <- mclapply(2:8, function(x) {
   set.seed(202212)
-  lca <- poLCA(f, lca_dat,
-               nclass = x, verbose = FALSE, nrep = 20)
+  lca <- poLCA(f, lca_dat, nclass = x, verbose = FALSE, nrep = 20)
   return(lca)
 }, mc.cores = num.cores)
 
@@ -292,28 +274,78 @@ df_bic %>%
 # Choose 5 classes with smallest BIC
 n_class <- df_bic$Class[which.min(df_bic$BIC)]
 fit_lca <- lca_res[[n_class - 1]]
+```
 
-# 
+
+### Answers for each class
+```{r, results = 'hide', fig.width = 10}
+# --- Alluvial plots ---
+answer <- c("Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree")
+col_names <- c("PartyLife", "TalkLess", "SocialComfort", "Invisible", "TopicStarter", 
+               "SayLittle", "ExtensiveContact", "AvoidAttention", "CentralPerson", "Quiet",
+               "Stressed", "Relaxed", "Worried", "FeelBlueLess", "Distubed",
+               "GetUpset", "MoodChange", "FreqMoodSwing", "Irritated", "FeelBlue",
+               "ConcernLess", "Interested", "Insult", "Sympathize", "NotInterestProb",
+               "SoftHeart", "NotInterestPpl", "TakeTime", "FeelEmo", "MakeEase",
+               "Prepared", "LeaveBelonging", "Meticulous", "MakeMess", "NoDelay",
+               "Forgetful", "LikeOrder", "ShirkDuty", "FollowSche", "Exacting",
+               "RichVocal", "DiffAbstract", "ViviImag", "NoInAbstract", "ExcelIdea",
+               "NoImag", "QuickUnderstand", "DiffWord", "SlowReflect", "FullIdea")
+five_factor <- data.frame(
+  fact_name = c("Extraversion", "EmoStablility", "Agreeableness", "Conscientious", "Intellect"),
+  factr = c("EXT", "EST", "AGR", "CSN", "OPN"))
+
 dat_clust <- lca_dat %>% 
   mutate(clust = fit_lca$predclass)
 
-dat_radar <- dat_clust %>% 
+dat_forshow <- dat_clust %>% 
   pivot_longer(
     1:50, 
     names_to = "variable", values_to = "value"
   ) %>% 
   group_by(variable, clust, value) %>% 
   summarise(tot = n()) %>% 
-  pivot_wider(
-    c(1:2),
-    names_from = "value", values_from = "tot"
-  )
+  pivot_wider(c(1:2), names_from = "value", values_from = "tot")
 
-dat_radar[is.na(dat_radar)] <- 0
-dat_radar %>% 
-  mutate(all = `1` + `2` + `3` + `4` + `5`) %>% 
-  mutate_at(c(3:7), .funs = ~./all) %>% 
-  select(-8)
+dat_forshow[is.na(dat_forshow)] <- 0
+dat_forshow_2 <- dat_forshow %>% 
+  mutate(factr = substr(variable, 1, 3))
+
+dat_forshow_3 <- 
+  left_join(dat_forshow_2, 
+            data.frame(name = col_names, variable = c(paste("EXT", seq(10), sep = ""), 
+                                                      paste("EST", seq(10), sep = ""),
+                                                      paste("AGR", seq(10), sep = ""),
+                                                      paste("CSN", seq(10), sep = ""),
+                                                      paste("OPN", seq(10), sep = ""))),
+            by = "variable")
+
+dat_forshow_fin <- left_join(dat_forshow_3, five_factor, by = "factr")
+
+make_alluvial <- function(x){
+  dat_forshow_fin[, -c(1, 8)] %>% 
+    pivot_longer(c(2:6), names_to = "Answer", values_to = "Freq") %>% 
+    mutate(clust = as.factor(clust),
+           Answer = factor(Answer, levels = c(1:5), labels = answer)) %>% 
+    filter(str_detect(fact_name, x)) %>% 
+    ggplot(aes(y = Freq, axis1 = name, axis2 = Answer, axis3 = clust)) +
+    geom_alluvium(aes(fill = clust), width = 1/12) +
+    geom_stratum(width = 1/12, fill = "black", color = "grey") +
+    geom_label(stat = "stratum", aes(label = after_stat(stratum))) +
+    scale_x_discrete(limits = c("Question", "Answer", "Cluster"), expand = c(.09, .09)) +
+    scale_fill_brewer(type = "qual", palette = "Set1") +
+    guides(fill = guide_legend(title = "Cluster")) +
+    theme_bw() +
+    labs(y = "Frequency",
+         title = paste("Alluvial Plot of", x, "by Cluster"))
+}
+
+# plot alluvial
+lapply(unique(dat_forshow_fin$fact_name), function(x){
+  make_alluvial(x)})
+
+# ---
+
 ```
 
 
