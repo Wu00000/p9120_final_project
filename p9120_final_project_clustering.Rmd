@@ -231,16 +231,22 @@ tbl_summary(by = clust,
 # Products
 htp_1 <- customer %>% select(10:15) %>% 
   mutate(cluster = km_mod$clustering) %>% 
+  mutate_at(c(1:6), .funs = ~scale(.)) %>% 
   pivot_longer(
     1:6, names_to = "product", values_to = "value"
   ) %>% 
   group_by(cluster, product) %>% 
-  summarise(amount = mean(value)) %>% 
-  ggplot(aes(x = cluster, y = product, fill = amount)) +
+  summarise(total = sum(value)) %>% 
+  pivot_wider(names_from = product, values_from = total) %>% 
+  mutate(total = MntFishProducts + MntFruits + MntGoldProds + 
+           MntMeatProducts + MntSweetProducts + MntWines) %>% 
+  pivot_longer(2:7, names_to = "product", values_to = "amount") %>% 
+  mutate(prct = amount/total * 100) %>% 
+  ggplot(aes(x = cluster, y = product, fill = prct)) +
   geom_tile() + theme_bw() +
   theme(legend.position = "bottom") +
   scale_y_discrete(labels = c("Fish", "Fruit", "Gold", "Meat", "Sweet", "Wine")) +
-  scale_fill_distiller(palette = "OrRd") +
+  scale_fill_distiller(palette = "OrRd", name = "percentage") +
   labs(x = "Cluster", y = "Product")
 
 # Places
@@ -255,7 +261,7 @@ htp_2 <- customer %>% select(18:20) %>%
   geom_tile() + theme_bw() +
   theme(legend.position = "bottom") +
   scale_y_discrete(labels = c("Catalog", "Store", "Website")) +
-  scale_fill_distiller(palette = "OrRd") +
+  scale_fill_distiller(palette = "OrRd", name = "frequency") +
   labs(x = "Cluster", y = "Place")
 
 htp_1 + htp_2 +
@@ -333,11 +339,11 @@ dirct <- data.frame(variable = c(paste("EXT", seq(10), sep = ""),
                               1, 0, 1, 0, 1, 0, 1, 1, 1, 1))
 # combine lca clusters
 dat_clust <- lca_dat %>% 
-  mutate(clust = fit_lca$predclass)
+  mutate(class = fit_lca$predclass)
 
 dat_forshow <- dat_clust %>% 
   pivot_longer(1:50, names_to = "variable", values_to = "value") %>% 
-  group_by(variable, clust, value) %>% 
+  group_by(variable, class, value) %>% 
   summarise(tot = n()) %>% 
   pivot_wider(c(1:2), names_from = "value", values_from = "tot")
 dat_forshow[is.na(dat_forshow)] <- 0
@@ -380,17 +386,17 @@ dat_forshow_fin <- left_join(dat_forshow_5, five_factor, by = "factr")
 make_alluvial <- function(x){
   dat_forshow_fin[, -c(1, 8)] %>% 
     pivot_longer(c(2:6), names_to = "Score", values_to = "Prct") %>% 
-    mutate(clust = as.factor(clust),
+    mutate(class = as.factor(class),
            Score = factor(Score, levels = c(5:1), labels = score)) %>% 
     filter(str_detect(fact_name, x)) %>% 
-    ggplot(aes(y = Prct, axis1 = name, axis2 = Score, axis3 = clust)) +
-    geom_alluvium(aes(fill = clust), width = 1/12) +
+    ggplot(aes(y = Prct, axis1 = name, axis2 = Score, axis3 = class)) +
+    geom_alluvium(aes(fill = class), width = 1/12) +
     geom_stratum(width = 1/12, fill = "black", color = "grey") +
     geom_label(stat = "stratum", aes(label = after_stat(stratum))) +
-    scale_x_discrete(limits = c("Question", "Score", "Cluster"), expand = c(.09, .09)) +
+    scale_x_discrete(limits = c("Question", "Score", "Class"), expand = c(.09, .09)) +
     scale_y_continuous(breaks = NULL) +
     scale_fill_brewer(type = "qual", palette = "Dark2") +
-    guides(fill = guide_legend(title = "Cluster")) +
+    guides(fill = guide_legend(title = "Class")) +
     theme_bw() +
     labs(y = "Percentage",
          title = paste(x))
@@ -401,7 +407,7 @@ lapply(unique(dat_forshow_fin$fact_name), function(x){
   make_alluvial(x)})
 ```
 
-```{r, fig.width = 12}
+```{r}
 # combine plots
 plt1 <- make_alluvial("Agreeableness")
 plt2 <- make_alluvial("Conscientious")
@@ -421,53 +427,59 @@ numcolors <- 50
 mycolors <- colorRampPalette(brewer.pal(8, "Set2"))(numcolors)
 colnames(big_five)[2:51] <- col_names
 
-# --- Cluster 5: most worst group---
-clust_5 <- big_five %>% 
-  mutate(clust = fit_lca$predclass) %>% 
-  filter(clust == 5)
+gr <- list(1:10, 11:20, 21:30, 31:40, 41:50)
+
+# --- Class 5: most worst group---
+class_5 <- big_five %>% 
+  mutate(class = fit_lca$predclass) %>% 
+  filter(class == 5)
 
 # check preference
-data.frame(num = colSums(clust_5[, 2:51] == 5)) %>% 
+data.frame(num = colSums(class_5[, 2:51] == 5)) %>% 
   tibble::rownames_to_column("variable") %>% 
-  mutate(prct = num/nrow(clust_5) * 100) %>% 
+  mutate(prct = num/nrow(class_5) * 100) %>% 
   ggplot(aes(x = prct, y = reorder(variable, prct), fill = variable)) +
   geom_bar(stat = "identity") +
   scale_fill_manual(values = mycolors) + theme_bw() +
-  theme(legend.position = "none") + 
+  theme(legend.position = "none",
+        axis.text.y = element_text(size = 6.5)) + 
   labs(y = "Question", x = "Percentage", 
-       title = "Percentage of Most Agree (score 5) in Cluster 5")
+       title = "Percentage of Most Agree (score 5) in Class 5")
 
 # estimate networks
-net_1 <- clust_5[, 2:51] %>% 
+net_1 <- class_5[, 2:51] %>% 
   mutate_all(.funs = ~as.numeric(.)) %>% as.matrix() %>% 
   estimateNetwork(default = "EBICglasso")
 
-qgraph(net_1$graph, labels = names(clust_5)[2:51], layout = "spring",
-       theme = "TeamFortress", label.cex = 1.8, label.fill.horizontal = 0.7)
+qgraph(net_1$graph, labels = names(class_5)[2:51], layout = "spring",
+       label.cex = 1.8, label.fill.horizontal = 0.7,
+       groups = gr, palette = "ggplot2")
 
-# --- Cluster 2: best group---
-clust_2 <- big_five %>% 
-  mutate(clust = fit_lca$predclass) %>% 
-  filter(clust == 2)
+# --- Class 2: best group---
+class_2 <- big_five %>% 
+  mutate(class = fit_lca$predclass) %>% 
+  filter(class == 2)
 
 # check preference
-data.frame(num = colSums(clust_2[, 2:51] == 5)) %>% 
+data.frame(num = colSums(class_2[, 2:51] == 5)) %>% 
   tibble::rownames_to_column("variable") %>% 
-  mutate(prct = num/nrow(clust_2) * 100) %>% 
+  mutate(prct = num/nrow(class_2) * 100) %>% 
   ggplot(aes(x = prct, y = reorder(variable, prct), fill = variable)) +
   geom_bar(stat = "identity") +
   scale_fill_manual(values = mycolors) + theme_bw() +
-  theme(legend.position = "none") + 
+  theme(legend.position = "none",
+        axis.text.y = element_text(size = 6.5)) + 
   labs(y = "Question", x = "Percentage", 
-       title = "Percentage of Most Agree (score 5) in Cluster 2")
+       title = "Percentage of Most Agree (score 5) in Class 2")
 
 # estimate networks
-net_2 <- clust_2[, 2:51] %>% 
+net_2 <- class_2[, 2:51] %>% 
   mutate_all(.funs = ~as.numeric(.)) %>% as.matrix() %>% 
   estimateNetwork(default = "EBICglasso")
 
-qgraph(net_2$graph, labels = names(clust_2)[2:51], layout = "spring",
-       theme = "TeamFortress", label.cex = 1.8, label.fill.horizontal = 0.7)
+qgraph(net_2$graph, labels = names(class_2)[2:51], layout = "spring",
+       label.cex = 1.8, label.fill.horizontal = 0.7,
+       groups = gr, palette = "ggplot2")
 ```
 
 
