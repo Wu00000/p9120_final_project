@@ -24,11 +24,15 @@ library(qgraph)
 library(poLCA)
 library(ggalluvial)
 library(ggpubr)
+library(qgraph)
 
 knitr::opts_chunk$set(
   message = FALSE,
   warning = FALSE
 )
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
 
 theme_gtsummary_compact()
 num.cores <- detectCores() - 1
@@ -395,7 +399,9 @@ make_alluvial <- function(x){
 # plot alluvial
 lapply(unique(dat_forshow_fin$fact_name), function(x){
   make_alluvial(x)})
+```
 
+```{r, fig.width = 12}
 # combine plots
 plt1 <- make_alluvial("Agreeableness")
 plt2 <- make_alluvial("Conscientious")
@@ -403,35 +409,65 @@ plt3 <- make_alluvial("EmoStability")
 plt4 <- make_alluvial("Extraversion")
 plt5 <- make_alluvial("Openness")
 
-ggarrange(plt1, plt2, plt3, plt4, plt5, ncol = 3, nrow = 2, common.legend = TRUE, legend = "bottom") %>% 
+ggarrange(plt1, plt2, plt3, plt4, plt5, ncol = 2, nrow = 3, common.legend = TRUE, legend = "bottom") %>% 
   annotate_figure(top = text_grob("Alluvial Plots"))
 ```
 
 
 ### Factor-lead subgroups
 ```{r}
-# --- cluster 4: excellent on all five ---
-clust_4 <- big_five %>% 
-  mutate(clust = fit_lca$predclass) %>% 
-  filter(clust == 4)
-
-# by continent
-clust_4 %>% 
-  group_by(continent) %>% summarise(tot = n()) %>% 
-  mutate(prct = tot/sum(fit_lca$predclass == 4) * 100) %>% 
-  ggplot(aes(x = prct, y = continent)) +
-  geom_bar(stat = "identity")
+library(RColorBrewer)
+numcolors <- 50
+mycolors <- colorRampPalette(brewer.pal(8, "Set2"))(numcolors)
+colnames(big_five)[2:51] <- col_names
 
 # --- Cluster 5: most worst group---
 clust_5 <- big_five %>% 
   mutate(clust = fit_lca$predclass) %>% 
   filter(clust == 5)
 
-clust_5 %>% 
-  group_by(continent) %>% summarise(tot = n()) %>% 
-  mutate(prct = tot/sum(fit_lca$predclass == 5) * 100) %>% 
-  ggplot(aes(x = prct, y = continent)) +
-  geom_bar(stat = "identity")
+# check preference
+data.frame(num = colSums(clust_5[, 2:51] == 5)) %>% 
+  tibble::rownames_to_column("variable") %>% 
+  mutate(prct = num/nrow(clust_5) * 100) %>% 
+  ggplot(aes(x = prct, y = reorder(variable, prct), fill = variable)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = mycolors) + theme_bw() +
+  theme(legend.position = "none") + 
+  labs(y = "Question", x = "Percentage", 
+       title = "Percentage of Most Agree (score 5) in Cluster 5")
+
+# estimate networks
+net_1 <- clust_5[, 2:51] %>% 
+  mutate_all(.funs = ~as.numeric(.)) %>% as.matrix() %>% 
+  estimateNetwork(default = "EBICglasso")
+
+qgraph(net_1$graph, labels = names(clust_5)[2:51], layout = "spring",
+       theme = "TeamFortress", label.cex = 1.8, label.fill.horizontal = 0.7)
+
+# --- Cluster 2: best group---
+clust_2 <- big_five %>% 
+  mutate(clust = fit_lca$predclass) %>% 
+  filter(clust == 2)
+
+# check preference
+data.frame(num = colSums(clust_2[, 2:51] == 5)) %>% 
+  tibble::rownames_to_column("variable") %>% 
+  mutate(prct = num/nrow(clust_2) * 100) %>% 
+  ggplot(aes(x = prct, y = reorder(variable, prct), fill = variable)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = mycolors) + theme_bw() +
+  theme(legend.position = "none") + 
+  labs(y = "Question", x = "Percentage", 
+       title = "Percentage of Most Agree (score 5) in Cluster 2")
+
+# estimate networks
+net_2 <- clust_2[, 2:51] %>% 
+  mutate_all(.funs = ~as.numeric(.)) %>% as.matrix() %>% 
+  estimateNetwork(default = "EBICglasso")
+
+qgraph(net_2$graph, labels = names(clust_2)[2:51], layout = "spring",
+       theme = "TeamFortress", label.cex = 1.8, label.fill.horizontal = 0.7)
 ```
 
 
